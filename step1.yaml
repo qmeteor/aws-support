@@ -267,8 +267,8 @@ Resources:
           - !ImportValue privateVPCSecurityGroup
         SubnetIds:
           - !ImportValue publicSubnet1ID
-            - !ImportValue privateSubnet1ID
-            - !ImportValue privateSubnet2ID
+          - !ImportValue privateSubnet1ID
+          - !ImportValue privateSubnet2ID
 #        Events:
 #          GetOneApi:
 #            Type: Api

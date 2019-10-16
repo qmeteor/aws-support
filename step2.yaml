@@ -1,0 +1,331 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Retrieve HTTP request objects from custom VPC that contains RDS db.
+Resources:
+  ShopBuddyApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      ## Swagger file in DefinitionBody
+      DefinitionBody:
+        swagger: 2.0.0
+        info:
+          title: ShopBuddy API
+          description: Api starter for ShopBuddy.
+          version: 0.0.5
+        host: api.example.com
+        schemes:
+          - https
+        paths:
+          /products:
+            get:
+              summary: Returns product data.
+              produces:
+                - application/json
+              responses:
+                "200":    # status code
+                  description: Product data resource.
+                  schema:
+                    $ref: '#/definitions/Product'
+              x-amazon-apigateway-integration:
+                type: aws
+                responses:
+                  default:
+                    statusCode: '200'
+                httpMethod: POST
+                uri:
+                  Fn::Sub: 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetFunction.Arn}/invocations'
+            post:
+              summary: Posts a single product object to MySQL inside custom VPC.
+              requestBody:
+                content:
+                  application/json:
+                    schema:
+                      $ref: '#/components/schemas/Message'
+              produces:
+                - application/json
+              consumes:
+                - application/json
+              responses:
+                '200':    # status code
+                  description: Save product data resource.
+                  schema:
+                    $ref: '#/definitions/Product'
+              x-amazon-apigateway-request-validator:
+                basic:
+                  validateRequestBody: true
+                  validateRequestParameters: true
+              x-amazon-apigateway-integration:
+                type: aws
+                responses:
+                  default:
+                    statusCode: '200'
+                httpMethod: POST
+                uri:
+                  Fn::Sub: 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PostFunction.Arn}/invocations'
+          /products/{id}:
+            get:
+              description: Returns a product based on a single ID.
+              operationId: find product by id
+              parameters:
+                - name: id
+                  in: path
+                  description: ID of product to fetch
+                  required: true
+                  schema:
+                    type: integer
+                    format: int64
+              produces:
+                - application/json
+              consumes:
+                - application/json
+              responses:
+                '200':
+                  description: product response
+                  content:
+                    application/json:
+                      schema:
+                        $ref: '#/definitions/Product'
+                default:
+                  description: unexpected error
+                  content:
+                    application/json:
+                      schema:
+                        $ref: '#/components/schemas/Error'
+              x-amazon-apigateway-request-validator:
+                basic:
+                  validateRequestBody: true
+                  validateRequestParameters: true
+              x-amazon-apigateway-integration:
+                type: aws
+                responses:
+                  default:
+                    statusCode: '200'
+                httpMethod: POST
+                uri:
+                  Fn::Sub: 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FindOne.Arn}/invocations'
+        definitions:
+          Product:
+            type: object
+            properties:
+              itemName:
+                type: string
+              itemSize:
+                type: number
+              listPrice:
+                type: number
+              lowPrice:
+                type: number
+              offerPrice:
+                type: number
+              points:
+                type: integer
+              storeId:
+                type: string
+              storeName:
+                type: string
+              couponCode:
+                type: string
+              couponCodeValue:
+                type: string
+              userId:
+                type: integer
+              userName:
+                type: string
+              userEmail:
+                type: string
+              userPhoneNumber:
+                type: string
+        components:
+          schemas:
+            Message:
+              title: A ShopBuddy data object.
+              type: object
+              properties:
+                itemName:
+                  type: string
+                  description: Product name
+                itemSize:
+                  type: number
+                  description: Product weight/quantity
+                listPrice:
+                  type: number
+                  description: MSRP for regular customers
+                lowPrice:
+                  type: number
+                  description: Cost price for store owner
+                offerPrice:
+                  type: number
+                  description: Multiply points to list price, deduct from list price to get this value
+                points:
+                  type: integer
+                  description: Each point is 5/10 cents multiplier based on item/offer
+                storeId:
+                  type: string
+                  description: Unique store identifier
+                storeName:
+                  type: string
+                  description: Store name
+                couponCode:
+                  type: string
+                  description: User specific coupon code given to avail offer
+                couponCodeValue:
+                  type: string
+                  description: Dollar value of discount offered on total purchase
+                userId:
+                  type: integer
+                  description: User assigned identifier
+                userName:
+                  type: string
+                  description: User name chosen
+                userEmail:
+                  type: string
+                  description: User email registered
+                userPhoneNumber:
+                  type: string
+                  description: User contact number
+  GetFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Runtime: nodejs8.10
+      Handler: index.getdata
+      CodeUri: ./
+      Description: HTTP trigger to retrieve objects from MySQL database.
+      MemorySize: 1024
+      Timeout: 15
+      Policies:
+        - AWSLambdaExecute # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+                - logs:*
+              Resource: '*'
+        - AWSLambdaVPCAccessExecutionRole # Provides minimum permissions for a Lambda function to execute while accessing a resource within a VPC - create, describe, delete network interfaces and write permissions to CloudWatch Logs.
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - rds:*
+              Resource: '*'
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue privateVPCSecurityGroup
+        SubnetIds:
+          - !ImportValue publicSubnet1ID
+          - !ImportValue privateSubnet1ID
+          - !ImportValue privateSubnet2ID
+      Events:
+        GetAllApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref "ShopBuddyApiGateway"
+            Path: '/products'
+            Method: get
+  FindOne:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Runtime: nodejs8.10
+      Handler: index.findone
+      CodeUri: ./
+      Description: HTTP trigger to retrieve objects from MySQL database.
+      MemorySize: 1024
+      Timeout: 15
+      Policies:
+        - AWSLambdaExecute # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+                - logs:*
+              Resource: '*'
+        - AWSLambdaVPCAccessExecutionRole # Provides minimum permissions for a Lambda function to execute while accessing a resource within a VPC - create, describe, delete network interfaces and write permissions to CloudWatch Logs.
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - rds:*
+              Resource: '*'
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue privateVPCSecurityGroup
+        SubnetIds:
+          - !ImportValue publicSubnet1ID
+          - !ImportValue privateSubnet1ID
+          - !ImportValue privateSubnet2ID
+        Events:
+          GetOneApi:
+            Type: Api
+            Properties:
+              RestApiId: !Ref "ShopBuddyApiGateway"
+              Path: '/products/{id}'
+              Method: get
+  PostFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Runtime: nodejs8.10
+      Handler: index.postdata
+      CodeUri: ./
+      Description: HTTP trigger to post objects to MySQL.
+      MemorySize: 1024
+      Timeout: 15
+      Policies:
+        - AWSLambdaExecute # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+                - logs:*
+              Resource: '*'
+        - AWSLambdaVPCAccessExecutionRole # Provides minimum permissions for a Lambda function to execute while accessing a resource within a VPC - create, describe, delete network interfaces and write permissions to CloudWatch Logs.
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+                - ec2:CreateNetworkInterface
+                - ec2:DescribeNetworkInterfaces
+                - ec2:DeleteNetworkInterface
+                - rds:*
+              Resource: '*'
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue privateVPCSecurityGroup
+        SubnetIds:
+          - !ImportValue publicSubnet1ID
+          - !ImportValue privateSubnet1ID
+          - !ImportValue privateSubnet2ID
+      Events:
+        PostApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref "ShopBuddyApiGateway"
+            Path: '/products'
+            Method: post
+Outputs:
+    GetFunction:
+      Description: "Get Lambda Function ARN"
+      Value: !GetAtt GetFunction.Arn
+    PostFunction:
+      Description: "Post Lambda Function ARN"
+      Value: !GetAtt PostFunction.Arn
